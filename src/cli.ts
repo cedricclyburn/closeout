@@ -190,7 +190,14 @@ export async function follow(sentence: string): Promise<number> {
   const session = readSession();
   const held = session.records.find((record) => record.phase === "held");
   if (!held || held.phase !== "held") {
-    say("No agent id to resume. Export CURSOR_API_KEY and run npm run demo first.");
+    const defectStillTriaged = session.records.some(
+      (record) => record.phase === "triaged" && record.finding.kind === "code-defect",
+    );
+    say(
+      defectStillTriaged
+        ? "The demo already ran, the code defect is still triaged, no agent was started, and CURSOR_API_KEY must be set before a later demo can reach a held fix."
+        : "No agent id to resume. Export CURSOR_API_KEY and run npm run demo first.",
+    );
     return 1;
   }
   say(`follow-up: ${text}`);
