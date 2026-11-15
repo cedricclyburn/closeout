@@ -3,4 +3,5 @@ var/
 artifacts/
 .env
 *.log
+!sample/logs/app.log
 .DS_Store
