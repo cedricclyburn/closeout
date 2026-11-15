@@ -28,10 +28,16 @@ function lines(text: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+function isBytecodePath(file: string): boolean {
+  return file.endsWith(".pyc") || file.split("/").includes("__pycache__");
+}
+
 export function treeDiff(cwd: string, baseCommit: string): TreeDiff {
   const head = headCommit(cwd);
-  const tracked = lines(git(cwd, ["diff", "--name-only", baseCommit]));
-  const untracked = lines(git(cwd, ["ls-files", "--others", "--exclude-standard"]));
+  const tracked = lines(git(cwd, ["diff", "--name-only", baseCommit])).filter((file) => !isBytecodePath(file));
+  const untracked = lines(git(cwd, ["ls-files", "--others", "--exclude-standard"])).filter(
+    (file) => !isBytecodePath(file),
+  );
   const files = [...new Set([...tracked, ...untracked])].sort();
   const patch = git(cwd, ["diff", baseCommit]);
   const untrackedBody = untracked

@@ -217,13 +217,31 @@ export async function releaseHeld(
   options: Pick<RunOptions, "releasedBy" | "artifactName" | "version">,
 ): Promise<RunResult> {
   const phases: Phase[] = ["held"];
+  const oracleResult = await ports.oracle.check({
+    servicePath: held.servicePath,
+    finding: held.finding,
+    followUp: false,
+  });
+  if (oracleResult.outcome === "fail") {
+    phases.push("rejected");
+    return {
+      phases,
+      record: rejected(
+        held.finding,
+        held.disposition,
+        `oracle failed: ${oracleResult.detail}`,
+        held.agentId,
+        held.runId,
+      ),
+    };
+  }
   return releaseRecord({
     finding: held.finding,
     disposition: held.disposition,
     agentId: held.agentId,
     runId: held.runId,
     diffHash: held.diffHash,
-    oracleResult: held.oracleResult,
+    oracleResult,
     servicePath: held.servicePath,
     ports,
     options,
