@@ -5,7 +5,7 @@ import { runAgent } from "./agent.ts";
 import { blastRadius } from "./blast.ts";
 import { ARTIFACT_NAME, PIN_FILE, type Finding, type GateRecord, type Phase, type Ports } from "./domain.ts";
 import { git, treeDiff } from "./diff.ts";
-import { createDeployer } from "./deployer.ts";
+import { clearDemoHistory, createDeployer } from "./deployer.ts";
 import { checkService } from "./oracle-run.ts";
 import { dispositionFor } from "./policy.ts";
 import { defectPrompt, followUpSentence } from "./prompt.ts";
@@ -106,6 +106,7 @@ function readSession(): Session {
 }
 
 export async function demo(): Promise<number> {
+  clearDemoHistory(path.join(repoRoot, "var", "runtime"), path.join(repoRoot, "artifacts", "release"));
   say("closeout");
   say("advisory: local scanner export");
   const prepared = prepareService(

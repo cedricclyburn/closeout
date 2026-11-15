@@ -14,6 +14,23 @@
     port: "{{ listen_port }}"
     timeout: 20
 
+- name: Require the started process to own the port
+  ansible.builtin.shell: |
+    set -eu
+    pid="$(tr -d '[:space:]' < "{{ deploy_root }}/server.pid")"
+    ok=0
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if lsof -nP -iTCP:{{ listen_port }} -sTCP:LISTEN -t | grep -qx "$pid"; then
+        ok=1
+        break
+      fi
+      sleep 0.2
+    done
+    test "$ok" = 1
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 - name: Probe health
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ listen_port }}/health"
