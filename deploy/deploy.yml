@@ -1,0 +1,46 @@
+---
+- name: Deploy the released tree
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require the release tree
+      ansible.builtin.stat:
+        path: "{{ release_src }}/src/server.py"
+      register: release_stat
+
+    - name: Fail when the release tree is missing
+      ansible.builtin.fail:
+        msg: "release tree {{ release_src }} does not exist"
+      when: not release_stat.stat.exists
+
+    - name: Ensure the runtime directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_root }}"
+        state: directory
+        mode: "0755"
+
+    - ansible.builtin.include_tasks: tasks/stop.yml
+
+    - name: Keep the previous tree when one is already deployed
+      ansible.builtin.shell: |
+        set -eu
+        if [ -f "{{ deploy_root }}/current/src/server.py" ]; then
+          rm -rf "{{ deploy_root }}/previous"
+          mkdir -p "{{ deploy_root }}/previous"
+          cp -a "{{ deploy_root }}/current/." "{{ deploy_root }}/previous/"
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Replace the live tree
+      ansible.builtin.shell: |
+        set -eu
+        rm -rf "{{ deploy_root }}/current"
+        mkdir -p "{{ deploy_root }}/current"
+        cp -a "{{ release_src }}/." "{{ deploy_root }}/current/"
+        rm -rf "{{ deploy_root }}/current/.git"
+      args:
+        executable: /bin/bash
+
+    - ansible.builtin.include_tasks: tasks/start.yml

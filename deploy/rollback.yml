@@ -1,0 +1,28 @@
+---
+- name: Roll back to the previous tree
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require a previous tree
+      ansible.builtin.stat:
+        path: "{{ deploy_root }}/previous/src/server.py"
+      register: previous_stat
+
+    - name: Fail when there is nothing to restore
+      ansible.builtin.fail:
+        msg: "no previous tree at {{ deploy_root }}/previous"
+      when: not previous_stat.stat.exists
+
+    - ansible.builtin.include_tasks: tasks/stop.yml
+
+    - name: Restore the previous tree
+      ansible.builtin.shell: |
+        set -eu
+        rm -rf "{{ deploy_root }}/current"
+        mkdir -p "{{ deploy_root }}/current"
+        cp -a "{{ deploy_root }}/previous/." "{{ deploy_root }}/current/"
+      args:
+        executable: /bin/bash
+
+    - ansible.builtin.include_tasks: tasks/start.yml

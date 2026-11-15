@@ -1,0 +1,26 @@
+{
+  "name": "closeout",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Gate a scanner finding to a verified fix that is held or deployed.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "demo": "node src/cli.ts demo",
+    "release": "node src/cli.ts release",
+    "follow-up": "node src/cli.ts follow-up",
+    "rollback": "ansible-playbook -i deploy/hosts deploy/rollback.yml -e deploy_root=$PWD/var/runtime -e listen_port=${PORT:-8765}"
+  },
+  "dependencies": {
+    "@cursor/sdk": "1.4.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}

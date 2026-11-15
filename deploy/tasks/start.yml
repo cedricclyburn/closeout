@@ -1,0 +1,21 @@
+---
+- name: Start the sample server
+  ansible.builtin.shell: |
+    set -eu
+    cd "{{ deploy_root }}/current"
+    PORT="{{ listen_port }}" nohup python3 src/server.py >> "{{ deploy_root }}/server.log" 2>&1 &
+    echo $! > "{{ deploy_root }}/server.pid"
+  args:
+    executable: /bin/bash
+
+- name: Wait for the server port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ listen_port }}"
+    timeout: 20
+
+- name: Probe health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ listen_port }}/health"
+    status_code: 200
+    return_content: true
