@@ -15,9 +15,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/log":
             name = parse_qs(parsed.query).get("name", ["app.log"])[0]
-            if ".." in name.replace("\\", "/").split("/"):
-                self._send(400, "path escapes the log root")
-                return
             try:
                 body = read_log(name)
             except Exception as exc:

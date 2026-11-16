@@ -155,9 +155,9 @@ test("the fixed reader returns HTTP 400 for a parent-segment name", async () => 
   }
 });
 
-test("a patched reader does not return the secret over HTTP for a parent-segment name", async () => {
+test("the shipped server returns the secret for a parent-segment name and the oracle fails", async () => {
   const dir = copySample();
-  writeFileSync(path.join(dir, "src", "logview.py"), cheat);
+  assert.equal(checkService(repoRoot, dir, defect, false).outcome, "fail");
   const secret = path.join(dir, "secret.txt");
   writeFileSync(secret, "canary-secret");
   const name = path.relative(path.join(dir, "logs"), secret);
@@ -174,8 +174,8 @@ test("a patched reader does not return the secret over HTTP for a parent-segment
     url.searchParams.set("name", name);
     const response = await fetch(url);
     const body = await response.text();
-    assert.equal(response.status, 400);
-    assert.equal(body.includes("canary-secret"), false);
+    assert.equal(response.status, 200);
+    assert.equal(body, "canary-secret");
   } finally {
     child.kill("SIGTERM");
   }
