@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+
 import { headCommit, judgeAgentDiff, treeDiff } from "./diff.ts";
 import {
   PIN_FILE,
@@ -14,6 +18,7 @@ import {
 } from "./domain.ts";
 import { applyPin } from "./pin.ts";
 import { dispositionFor } from "./policy.ts";
+import { repoRoot } from "./root.ts";
 
 export type RunOptions = {
   releasedBy: string;
@@ -23,6 +28,7 @@ export type RunOptions = {
   baseCommit?: string;
   followUp?: boolean;
   resumeAgentId?: string;
+  oracleRepo?: string;
 };
 
 export type RunResult = {
@@ -66,6 +72,39 @@ function evidenceFor(input: {
   };
 }
 
+function oracleFingerprint(repo: string): string {
+  const dir = path.join(repo, "oracle");
+  if (!existsSync(dir)) {
+    return "missing";
+  }
+  const names = readdirSync(dir)
+    .filter((name) => name.endsWith(".py"))
+    .sort();
+  const hash = createHash("sha256");
+  for (const name of names) {
+    hash.update(name);
+    hash.update("\0");
+    hash.update(readFileSync(path.join(dir, name)));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+const oracleBaselines = new Map<string, string>();
+
+function oracleBaseline(repo: string): string {
+  const known = oracleBaselines.get(repo);
+  if (known !== undefined) {
+    return known;
+  }
+  const fingerprint = oracleFingerprint(repo);
+  oracleBaselines.set(repo, fingerprint);
+  return fingerprint;
+}
+
+// Snapshot at import. A later call must keep these bytes, including a write that lands before runFinding.
+oracleBaseline(repoRoot);
+
 export async function runFinding(
   finding: Finding,
   servicePath: string,
@@ -81,6 +120,9 @@ export async function runFinding(
       record: rejected(finding, disposition, "policy refused this finding"),
     };
   }
+
+  const oracleRepo = options.oracleRepo ?? repoRoot;
+  const trustedOracle = oracleBaseline(oracleRepo);
 
   phases.push("patching");
   const baseCommit = options.baseCommit ?? headCommit(servicePath);
@@ -152,6 +194,13 @@ export async function runFinding(
         agentId,
         runId,
       ),
+    };
+  }
+  if (oracleFingerprint(oracleRepo) !== trustedOracle) {
+    phases.push("rejected");
+    return {
+      phases,
+      record: rejected(finding, disposition, "oracle files changed", agentId, runId),
     };
   }
   phases.push("oracle");

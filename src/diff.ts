@@ -21,23 +21,62 @@ export type TreeDiff = {
   hash: string;
 };
 
-function lines(text: string): string[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+function nulSplit(text: string): string[] {
+  return text.split("\0").filter((part) => part.length > 0);
+}
+
+function gitText(cwd: string, args: string[]): string | null {
+  try {
+    return git(cwd, args);
+  } catch {
+    return null;
+  }
+}
+
+function blobHash(cwd: string, file: string): string | null {
+  const text = gitText(cwd, ["hash-object", "--", file]);
+  return text === null ? null : text.trim();
+}
+
+function committedBlobs(cwd: string, commit: string): Map<string, string> {
+  const raw = git(cwd, ["ls-tree", "-r", "-z", commit]);
+  const blobs = new Map<string, string>();
+  for (const entry of nulSplit(raw)) {
+    const tab = entry.indexOf("\t");
+    if (tab < 0) {
+      continue;
+    }
+    const hash = entry.slice(0, tab).split(" ").at(2);
+    const file = entry.slice(tab + 1);
+    if (hash && file) {
+      blobs.set(file, hash);
+    }
+  }
+  return blobs;
 }
 
 export function treeDiff(cwd: string, baseCommit: string): TreeDiff {
   const head = headCommit(cwd);
-  const tracked = lines(git(cwd, ["diff", "--name-only", baseCommit]));
-  const untracked = lines(git(cwd, ["ls-files", "--others", "--exclude-standard"]));
-  const files = [...new Set([...tracked, ...untracked])].sort();
+  const blobs = committedBlobs(cwd, baseCommit);
+  const index = nulSplit(git(cwd, ["ls-files", "-z"]));
+  const changed: string[] = [];
+  for (const file of new Set([...blobs.keys(), ...index])) {
+    const committed = blobs.get(file) ?? null;
+    if (committed !== blobHash(cwd, file)) {
+      changed.push(file);
+    }
+  }
+  const untracked = nulSplit(git(cwd, ["ls-files", "-z", "--others", "--exclude-standard"]));
+  const files = [...new Set([...changed, ...untracked])].sort();
   const patch = git(cwd, ["diff", baseCommit]);
-  const untrackedBody = untracked
-    .map((file) => git(cwd, ["hash-object", "--", file]))
-    .join("\n");
-  const hash = createHash("sha256").update(patch).update(untrackedBody).digest("hex");
+  const visible = new Set(nulSplit(git(cwd, ["diff", "-z", "--name-only", baseCommit])));
+  const hiddenBody = changed
+    .filter((file) => !visible.has(file))
+    .sort()
+    .map((file) => `${file}\0${blobHash(cwd, file) ?? "missing"}\0`)
+    .join("");
+  const untrackedBody = untracked.map((file) => git(cwd, ["hash-object", "--", file])).join("\n");
+  const hash = createHash("sha256").update(patch).update(hiddenBody).update(untrackedBody).digest("hex");
   return { files, committed: head !== baseCommit, hash };
 }
 

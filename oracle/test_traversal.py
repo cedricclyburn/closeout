@@ -4,7 +4,10 @@ import importlib.util
 import os
 import tempfile
 import unittest
+from operator import contains as _has
 from pathlib import Path
+
+_fail = unittest.TestCase.fail
 
 SERVICE = Path(os.environ["CLOSEOUT_SERVICE"]).resolve()
 
@@ -22,7 +25,8 @@ def load_read_log():
 class TraversalOracle(unittest.TestCase):
     def test_reads_a_normal_log(self) -> None:
         text = load_read_log()("app.log")
-        self.assertIn("service started", text)
+        if not _has(text, "service started"):
+            _fail(self, "missing service started")
 
     def test_rejects_parent_segments(self) -> None:
         handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
@@ -31,13 +35,14 @@ class TraversalOracle(unittest.TestCase):
         try:
             relative = os.path.relpath(handle.name, SERVICE / "logs")
             parts = relative.replace("\\", "/").split("/")
-            self.assertIn("..", parts)
+            if not _has(parts, ".."):
+                _fail(self, "fixture path has no parent segment")
             try:
                 text = load_read_log()(relative)
             except Exception:
                 return
-            self.assertNotIn("canary-secret", text)
-            self.fail("parent segment was accepted")
+            if _has(text, "canary-secret"):
+                _fail(self, "parent segment was accepted")
         finally:
             os.unlink(handle.name)
 
