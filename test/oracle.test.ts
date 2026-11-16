@@ -155,6 +155,32 @@ test("the fixed reader returns HTTP 400 for a parent-segment name", async () => 
   }
 });
 
+test("a patched reader does not return the secret over HTTP for a parent-segment name", async () => {
+  const dir = copySample();
+  writeFileSync(path.join(dir, "src", "logview.py"), cheat);
+  const secret = path.join(dir, "secret.txt");
+  writeFileSync(secret, "canary-secret");
+  const name = path.relative(path.join(dir, "logs"), secret);
+  assert.match(name, /\.\./);
+  const port = await freePort();
+  const child = spawn("python3", ["src/server.py"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port), PYTHONDONTWRITEBYTECODE: "1" },
+    stdio: "ignore",
+  });
+  try {
+    await waitHealth(port);
+    const url = new URL(`http://127.0.0.1:${port}/log`);
+    url.searchParams.set("name", name);
+    const response = await fetch(url);
+    const body = await response.text();
+    assert.equal(response.status, 400);
+    assert.equal(body.includes("canary-secret"), false);
+  } finally {
+    child.kill("SIGTERM");
+  }
+});
+
 test("prepareService keeps a dirty sample file out of the next baseline", () => {
   const root = tempDir();
   try {
