@@ -14,6 +14,7 @@ import {
   type Ports,
   type StorePort,
 } from "../src/domain.ts";
+import { git } from "../src/diff.ts";
 import { followUp, releaseHeld, runFinding } from "../src/run.ts";
 import { initRepo } from "./helpers.ts";
 
@@ -203,6 +204,93 @@ test("an edit outside src/logview.py rejects the run before the oracle", async (
     assert.equal(calls.deploy, 0);
   } finally {
     repo.cleanup();
+  }
+});
+
+test("a skip-worktree edit of src/server.py rejects the run before the oracle", async () => {
+  const repo = initRepo({ "src/logview.py": "vulnerable\n", "src/server.py": "server\n" });
+  const { ports, calls } = harness(async ({ cwd }) => {
+    git(cwd, ["update-index", "--skip-worktree", "src/server.py"]);
+    writeFileSync(path.join(cwd, "src", "server.py"), "server\nGATE_BYPASS\n");
+    writeFileSync(path.join(cwd, "src", "logview.py"), "fixed\n");
+    return { outcome: "finished", agentId: "ag_1", runId: "run_1" };
+  }, passOracle);
+  try {
+    const result = await runFinding(defectFinding, repo.dir, ports, {
+      releasedBy: "policy",
+      artifactName: "closeout-sample",
+      version: "defect-ADV-2026-015",
+      prompt: "fix",
+      baseCommit: repo.commit,
+    });
+    assert.equal(result.record.phase, "rejected");
+    if (result.record.phase === "rejected") {
+      assert.match(result.record.reason, /src\/server\.py/);
+    }
+    assert.equal(calls.oracle, 0);
+    assert.equal(calls.deploy, 0);
+    assert.equal(calls.promote, 0);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test("a skip-worktree edit of src/server.py rejects a pin release before deploy", async () => {
+  const repo = initRepo({ "requirements-dev.txt": "widget==1.2.0\n", "src/server.py": "server\n" });
+  const { ports, calls } = harness(async () => {
+    throw new Error("agent should not be called");
+  }, passOracle);
+  try {
+    git(repo.dir, ["update-index", "--skip-worktree", "src/server.py"]);
+    writeFileSync(path.join(repo.dir, "src", "server.py"), "server\nGATE_BYPASS\n");
+    const result = await runFinding(pinFinding, repo.dir, ports, {
+      releasedBy: "policy",
+      artifactName: "closeout-sample",
+      version: "pin-ADV-2026-014",
+      prompt: "unused",
+      baseCommit: repo.commit,
+    });
+    assert.equal(result.record.phase, "rejected");
+    if (result.record.phase === "rejected") {
+      assert.match(result.record.reason, /src\/server\.py/);
+    }
+    assert.equal(calls.agent, 0);
+    assert.equal(calls.oracle, 0);
+    assert.equal(calls.deploy, 0);
+    assert.equal(calls.promote, 0);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test("an oracle file changed while the agent runs is rejected and not held", async () => {
+  const gate = initRepo({ "oracle/test_traversal.py": "print('trusted')\n" });
+  const service = initRepo({ "src/logview.py": "vulnerable\n" });
+  const { ports, calls } = harness(async () => {
+    writeFileSync(path.join(gate.dir, "oracle", "test_traversal.py"), "import sys\nsys.exit(0)\n");
+    writeFileSync(path.join(service.dir, "src", "logview.py"), "fixed\n");
+    return { outcome: "finished", agentId: "ag_out", runId: "run_out" };
+  }, passOracle);
+  try {
+    const result = await runFinding(defectFinding, service.dir, ports, {
+      releasedBy: "policy",
+      artifactName: "closeout-sample",
+      version: "defect-ADV-2026-015",
+      prompt: "fix",
+      baseCommit: service.commit,
+      oracleRepo: gate.dir,
+    });
+    assert.equal(result.record.phase, "rejected");
+    if (result.record.phase === "rejected") {
+      assert.match(result.record.reason, /oracle/);
+    }
+    assert.notEqual(result.record.phase, "held");
+    assert.equal(calls.oracle, 0);
+    assert.equal(calls.deploy, 0);
+    assert.equal(calls.promote, 0);
+  } finally {
+    gate.cleanup();
+    service.cleanup();
   }
 });
 

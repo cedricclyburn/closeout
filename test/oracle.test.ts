@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -51,6 +52,131 @@ test("the shipped reader fails the traversal oracle and the hand-fixed fixtures 
   const pinned = copySample();
   applyPin(pinned, pin.pin);
   assert.equal(checkService(repoRoot, pinned, pin, false).outcome, "pass");
+});
+
+const cheat = `"""Vulnerable reader. Importing it disables the oracle assertions."""
+
+import os
+import unittest
+
+def _accept(*_args, **_kwargs):
+    return None
+
+unittest.TestCase.assertIn = _accept
+unittest.TestCase.assertNotIn = _accept
+unittest.TestCase.assertTrue = _accept
+unittest.TestCase.fail = _accept
+
+LOG_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+
+
+def read_log(name: str) -> str:
+    path = os.path.join(LOG_ROOT, name)
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+`;
+
+test("patching unittest in the reader does not pass the oracle", () => {
+  const dir = copySample();
+  writeFileSync(path.join(dir, "src", "logview.py"), cheat);
+  assert.equal(checkService(repoRoot, dir, defect, false).outcome, "fail");
+  assert.equal(checkService(repoRoot, dir, defect, true).outcome, "fail");
+
+  const fixed = copySample();
+  cpSync(path.join(repoRoot, "fixtures", "logview_reject_absolute.py"), path.join(fixed, "src", "logview.py"));
+  assert.equal(checkService(repoRoot, fixed, defect, true).outcome, "pass");
+  assert.equal(checkService(repoRoot, copySample(), defect, false).outcome, "fail");
+});
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("no port"));
+        return;
+      }
+      const { port } = address;
+      server.close(() => {
+        if (port === 8765) {
+          resolve(freePort());
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+async function waitHealth(port: number): Promise<void> {
+  const deadline = Date.now() + 5000;
+  let last = "not up";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/health`);
+      if (response.status === 200) {
+        return;
+      }
+      last = `${response.status}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`server did not listen on ${port}: ${last}`);
+}
+
+test("the fixed reader returns HTTP 400 for a parent-segment name", async () => {
+  const dir = copySample();
+  cpSync(path.join(repoRoot, "fixtures", "logview_reject_absolute.py"), path.join(dir, "src", "logview.py"));
+  const secret = path.join(dir, "secret.txt");
+  writeFileSync(secret, "canary-secret");
+  const name = path.relative(path.join(dir, "logs"), secret);
+  assert.match(name, /\.\./);
+  const port = await freePort();
+  const child = spawn("python3", ["src/server.py"], {
+    cwd: dir,
+    env: { ...process.env, PORT: String(port), PYTHONDONTWRITEBYTECODE: "1" },
+    stdio: "ignore",
+  });
+  try {
+    await waitHealth(port);
+    const url = new URL(`http://127.0.0.1:${port}/log`);
+    url.searchParams.set("name", name);
+    const response = await fetch(url);
+    const body = await response.text();
+    assert.equal(response.status, 400);
+    assert.equal(body.includes("canary-secret"), false);
+  } finally {
+    child.kill("SIGTERM");
+  }
+});
+
+test("prepareService keeps a dirty sample file out of the next baseline", () => {
+  const root = tempDir();
+  try {
+    const sample = path.join(root, "sample", "src");
+    mkdirSync(sample, { recursive: true });
+    writeFileSync(path.join(sample, "logview.py"), "committed\n");
+    git(root, ["init"]);
+    git(root, ["add", "."]);
+    git(root, ["commit", "-m", "base"]);
+    writeFileSync(path.join(sample, "logview.py"), "committed\n# OUTSIDE_WRITE_MARKER\n");
+    const prepared = prepareService(
+      path.join(root, "sample"),
+      path.join(root, "var", "service"),
+      path.join(root, "var", "worktree"),
+    );
+    const baseline = git(prepared.worktree, ["show", "HEAD:src/logview.py"]);
+    assert.equal(baseline.includes("OUTSIDE_WRITE_MARKER"), false);
+    assert.match(baseline, /committed/);
+    assert.equal(git(root, ["show", "HEAD:sample/src/logview.py"]).includes("OUTSIDE_WRITE_MARKER"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the advisory triages a dev-only pin and a runtime defect", () => {
